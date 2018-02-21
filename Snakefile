@@ -28,7 +28,7 @@ def read_key_and_write_config(key_file, outdir):
 
 def filter_combined_covstats(cutoff, covstats_file, filtered_popmap):
     covstats = pandas.read_csv(covstats_file)
-    passed_filter = covstats[covstats['primary'] > cutoff]
+    passed_filter = covstats[covstats['final_coverage_mean'] > cutoff]
     passed_filter['population'] = passed_filter['individual'].transform(
         lambda x: re.sub("[\d|_]+", "", x))
     popmap = passed_filter[['individual', 'population']]
@@ -64,17 +64,60 @@ read_file = 'data/C6JRFANXX/SQ2532_NoIndex_L007_R1_001.fastq.gz'
 
 rule target:
     input:
-        'output/03_ustacks/batch_1.catalog.tags.tsv.gz'
+        dynamic('output/06_sstacks/{sstacks_indiv}.matches.tsv.gz')
 
-# 05 generate the catalog (takes ~ 1 week)
+
+# 06 match samples to the catalog
+rule sstacks:
+    input:
+        flag = dynamic('output/01_config/flags/{filtered_indiv}'),
+        catalog = 'output/05_ustacks/batch_1.catalog.tags.tsv.gz'
+    output:
+        dynamic('output/06_sstacks/{sstacks_indiv}.matches.tsv.gz')
+    params:
+        ustacks_dir = 'output/03_ustacks',
+        sstacks_dir = 'output/06_sstacks',
+        catalog_prefix = 'output/05_ustacks/batch_1'
+    threads:
+        75
+    log:
+        'output/logs/06_sstacks.log'
+    run:
+        my_sample_names = [os.path.basename(x) for x in input.flag]
+        my_sample_paths = [os.path.join(params.ustacks_dir, x)
+                           for x in my_sample_names]
+        my_sample_string = '-s ' + ' -s '.join(my_sample_paths)
+        shell('sstacks '
+              '{my_sample_string} '
+              '-c {params.catalog_prefix} '
+              '-p {threads} '
+              '-o {params.sstacks_dir} '
+              '&> {log}')
+
+# 05 generate the catalog
+rule mv_cstacks:
+    input:
+        t = 'output/03_ustacks/batch_1.catalog.tags.tsv.gz',
+        s = 'output/03_ustacks/batch_1.catalog.snps.tsv.gz',
+        a = 'output/03_ustacks/batch_1.catalog.alleles.tsv.gz',
+    output:
+        t = 'output/05_ustacks/batch_1.catalog.tags.tsv.gz',
+        s = 'output/05_ustacks/batch_1.catalog.snps.tsv.gz',
+        a = 'output/05_ustacks/batch_1.catalog.alleles.tsv.gz',
+    shell:
+        'cp {input.t} {output.t} & '
+        'cp {input.s} {output.s} & '
+        'cp {input.a} {output.a} & '
+        'wait'
+
 rule cstacks:
     input:
         map = 'output/01_config/filtered_popmap.tsv',
-        flag = dynamic('output/01_config/flags/{filtered_indiv}'),
+        flag = dynamic('output/01_config/flags/{filtered_indiv}')
     output:
-        'output/03_ustacks/batch_1.catalog.tags.tsv.gz',
-        'output/03_ustacks/batch_1.catalog.snps.tsv.gz',
-        'output/03_ustacks/batch_1.catalog.alleles.tsv.gz',
+        temp('output/03_ustacks/batch_1.catalog.tags.tsv.gz'),
+        temp('output/03_ustacks/batch_1.catalog.snps.tsv.gz'),
+        temp('output/03_ustacks/batch_1.catalog.alleles.tsv.gz')
     params:
         ustacks_dir = 'output/03_ustacks'
     threads:
