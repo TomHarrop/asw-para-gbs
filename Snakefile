@@ -64,62 +64,60 @@ read_file = 'data/C6JRFANXX/SQ2532_NoIndex_L007_R1_001.fastq.gz'
 
 rule target:
     input:
-        dynamic('output/06_sstacks/{sstacks_indiv}.matches.tsv.gz')
+        dynamic('output/03_stacks/{tsv2bam_indiv}.bam')
 
 
-# 06 match samples to the catalog
-rule sstacks:
+# 06 match samples to the catalog and convert to bam
+rule tsv2bam:
     input:
-        flag = dynamic('output/01_config/flags/{filtered_indiv}'),
-        catalog = 'output/05_ustacks/batch_1.catalog.tags.tsv.gz'
+        dynamic('output/03_stacks/{sstacks_indiv}.matches.tsv.gz'),
+        filtered_popmap = 'output/01_config/filtered_popmap.tsv'
     output:
-        dynamic('output/06_sstacks/{sstacks_indiv}.matches.tsv.gz')
+        dynamic('output/03_stacks/{tsv2bam_indiv}.bam')
     params:
-        ustacks_dir = 'output/03_ustacks',
-        sstacks_dir = 'output/06_sstacks',
-        catalog_prefix = 'output/05_ustacks/batch_1'
+        stacks_dir = 'output/03_stacks'
     threads:
         75
     log:
-        'output/logs/06_sstacks.log'
+        'output/logs/06_sstacks/tsv2bam.log'
+    shell:
+        'tsv2bam '
+        '-P {params.stacks_dir} '
+        '-M {input.filtered_popmap} '
+        '-t {threads} '
+        '&> {log} '
+
+rule sstacks:
+    input:
+        dynamic('output/01_config/flags/{filtered_indiv}'),
+        catalog = 'output/03_stacks/batch_1.catalog.tags.tsv.gz',
+        filtered_popmap = 'output/01_config/filtered_popmap.tsv'
+    output:
+        dynamic('output/03_stacks/{sstacks_indiv}.matches.tsv.gz')
+    params:
+        stacks_dir = 'output/03_stacks'
+    threads:
+        75
+    log:
+        'output/logs/06_sstacks/sstacks.log'
     run:
-        my_sample_names = [os.path.basename(x) for x in input.flag]
-        my_sample_paths = [os.path.join(params.ustacks_dir, x)
-                           for x in my_sample_names]
-        my_sample_string = '-s ' + ' -s '.join(my_sample_paths)
-        shell('sstacks '
-              '{my_sample_string} '
-              '-c {params.catalog_prefix} '
-              '-p {threads} '
-              '-o {params.sstacks_dir} '
-              '&> {log}')
+        'sstacks '
+        '-P {params.stacks_dir} '
+        '-M {input.filtered_popmap} '
+        '-p {threads} '
+        '&> {log}'
 
 # 05 generate the catalog
-rule mv_cstacks:
-    input:
-        t = 'output/03_ustacks/batch_1.catalog.tags.tsv.gz',
-        s = 'output/03_ustacks/batch_1.catalog.snps.tsv.gz',
-        a = 'output/03_ustacks/batch_1.catalog.alleles.tsv.gz',
-    output:
-        t = 'output/05_ustacks/batch_1.catalog.tags.tsv.gz',
-        s = 'output/05_ustacks/batch_1.catalog.snps.tsv.gz',
-        a = 'output/05_ustacks/batch_1.catalog.alleles.tsv.gz',
-    shell:
-        'cp {input.t} {output.t} & '
-        'cp {input.s} {output.s} & '
-        'cp {input.a} {output.a} & '
-        'wait'
-
 rule cstacks:
     input:
         map = 'output/01_config/filtered_popmap.tsv',
         flag = dynamic('output/01_config/flags/{filtered_indiv}')
     output:
-        temp('output/03_ustacks/batch_1.catalog.tags.tsv.gz'),
-        temp('output/03_ustacks/batch_1.catalog.snps.tsv.gz'),
-        temp('output/03_ustacks/batch_1.catalog.alleles.tsv.gz')
+        'output/03_stacks/batch_1.catalog.tags.tsv.gz',
+        'output/03_stacks/batch_1.catalog.snps.tsv.gz',
+        'output/03_stacks/batch_1.catalog.alleles.tsv.gz'
     params:
-        ustacks_dir = 'output/03_ustacks'
+        ustacks_dir = 'output/03_stacks'
     threads:
         75
     log:
@@ -170,7 +168,7 @@ rule combine_individual_covstats:
 
 rule individual_covstats:
     input:
-        tags_file = 'output/03_ustacks/{individual}.tags.tsv.gz'
+        tags_file = 'output/03_stacks/{individual}.tags.tsv.gz'
     output:
         covstats = 'output/04_covstats/{individual}.csv'
     log:
@@ -186,12 +184,12 @@ rule ustacks:
         fastq = 'output/02_demux/{individual}.fq.gz',
         individual_i_pickle = 'output/01_config/individual_i.p'
     params:
-        wd = 'output/03_ustacks'
+        wd = 'output/03_stacks'
     output:
-        'output/03_ustacks/{individual}.alleles.tsv.gz',
-        'output/03_ustacks/{individual}.snps.tsv.gz',
-        'output/03_ustacks/{individual}.models.tsv.gz',
-        'output/03_ustacks/{individual}.tags.tsv.gz'
+        'output/03_stacks/{individual}.alleles.tsv.gz',
+        'output/03_stacks/{individual}.snps.tsv.gz',
+        'output/03_stacks/{individual}.models.tsv.gz',
+        'output/03_stacks/{individual}.tags.tsv.gz'
     threads:
         15
     log:
