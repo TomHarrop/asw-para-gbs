@@ -64,5 +64,3 @@ fwrite(covstats, output_covstats)
 
 # write session info
 sessionInfo()
-
-

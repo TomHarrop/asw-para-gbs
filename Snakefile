@@ -64,8 +64,29 @@ read_file = 'data/C6JRFANXX/SQ2532_NoIndex_L007_R1_001.fastq.gz'
 
 rule target:
     input:
-        dynamic('output/03_stacks/{tsv2bam_indiv}.bam')
+        'output/03_stacks/gstacks.vcf.gz'
 
+
+# 07 generate catalog
+rule gstacks:
+    input:
+        dynamic('output/03_stacks/{tsv2bam_indiv}.bam'),
+        filtered_popmap = 'output/01_config/filtered_popmap.tsv'
+    output:
+        'output/03_stacks/gstacks.fa.gz',
+        'output/03_stacks/gstacks.vcf.gz'
+    params:
+        stacks_dir = 'output/03_stacks'
+    threads:
+        75
+    log:
+        'output/logs/07_gstacks.log'
+    shell:
+        'gstacks '
+        '-P {params.stacks_dir} '
+        '-M {input.filtered_popmap} '
+        '-t {threads} '
+        '&> {log}'
 
 # 06 match samples to the catalog and convert to bam
 rule tsv2bam:
@@ -89,7 +110,6 @@ rule tsv2bam:
 
 rule sstacks:
     input:
-        dynamic('output/01_config/flags/{filtered_indiv}'),
         catalog = 'output/03_stacks/batch_1.catalog.tags.tsv.gz',
         filtered_popmap = 'output/01_config/filtered_popmap.tsv'
     output:
@@ -100,7 +120,7 @@ rule sstacks:
         75
     log:
         'output/logs/06_sstacks/sstacks.log'
-    run:
+    shell:
         'sstacks '
         '-P {params.stacks_dir} '
         '-M {input.filtered_popmap} '
@@ -110,8 +130,8 @@ rule sstacks:
 # 05 generate the catalog
 rule cstacks:
     input:
-        map = 'output/01_config/filtered_popmap.tsv',
-        flag = dynamic('output/01_config/flags/{filtered_indiv}')
+        dynamic('output/03_stacks/{individual}.alleles.tsv.gz'),
+        map = 'output/01_config/filtered_popmap.tsv'
     output:
         'output/03_stacks/batch_1.catalog.tags.tsv.gz',
         'output/03_stacks/batch_1.catalog.snps.tsv.gz',
@@ -130,18 +150,6 @@ rule cstacks:
         '-n 3 '
         '&> {log} '
   
-rule cstacks_flags:
-    input:
-        filtered_popmap = 'output/01_config/filtered_popmap.tsv'
-    output:
-        dynamic('output/01_config/flags/{filtered_indiv}')
-    params:
-        outdir = 'output/01_config/flags'
-    run:
-        write_flag_files(
-            filtered_popmap=input.filtered_popmap,
-            outdir=params.outdir)
-
 # 04 calculate coverage stats per individual and filter
 rule filter_by_coverage:
     input:
@@ -191,7 +199,7 @@ rule ustacks:
         'output/03_stacks/{individual}.models.tsv.gz',
         'output/03_stacks/{individual}.tags.tsv.gz'
     threads:
-        15
+        10
     log:
         'output/logs/03_ustacks/{individual}.log'
     run:
