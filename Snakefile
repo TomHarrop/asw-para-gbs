@@ -26,6 +26,19 @@ def read_key_and_write_config(key_file, outdir):
                           index=False)
 
 
+def generate_full_popmap(key_file, full_popmap):
+    key_data = pandas.read_csv(key_file, delimiter='\t')
+    subset = key_data['sample']
+    individual = list(re.sub('\s+', '_', x) for x in subset)
+    population = list(re.sub("[\d|_]+", "", x) for x in individual)
+    popmap = pandas.DataFrame({'individual': individual,
+                               'population': population})
+    popmap.to_csv(full_popmap,
+                  sep='\t',
+                  header=False,
+                  index=False)
+
+
 def filter_combined_covstats(cutoff, covstats_file, filtered_popmap):
     covstats = pandas.read_csv(covstats_file)
     passed_filter = covstats[covstats['final_coverage_mean'] > cutoff]
@@ -64,23 +77,109 @@ read_file = 'data/C6JRFANXX/SQ2532_NoIndex_L007_R1_001.fastq.gz'
 
 rule target:
     input:
-        'output/03_stacks/gstacks.vcf.gz'
+        'output/04_stacks/gstacks.vcf.gz',
+        'output/03_params/compare_defaults/optimised_samplestats_combined.csv'
 
-
-# 07 generate catalog
-rule gstacks:
+# 10 integrate the alignment information
+rule integrate_alignments:
     input:
-        dynamic('output/03_stacks/{tsv2bam_indiv}.bam'),
-        filtered_popmap = 'output/01_config/filtered_popmap.tsv'
+        bam = 'output/09_bwa/gstacks_filtered.bam',
+        fa = 'output/04_stacks/gstacks.fa.gz',
+        vcf = 'output/04_stacks/gstacks.vcf.gz'
     output:
-        'output/03_stacks/gstacks.fa.gz',
-        'output/03_stacks/gstacks.vcf.gz'
+        stacks_indir = temp('output/10_stacks'),
+        tmp_fa = temp('output/10_stacks/catalog.fa.gz'),
+        tmp_vcf = temp('output/10_stacks/catalog.calls'),
+        fa = 'output/10_aligned-catalog/gstacks.fa.gz',
+        vcf = 'output/10_aligned-catalog/gstacks.vcf.gz'
     params:
-        stacks_dir = 'output/03_stacks'
+        stacks_outdir = 'output/10_aligned-catalog'
+    log:
+        'output/logs/10_integrate-alignments.log'
+    shell:
+        'cp {input.fa} {output.tmp_fa} & '
+        'cp {input.vcf} {output.tmp_vcf} & '
+        'wait ; '
+        'stacks-integrate-alignments '
+        '-P {output.stacks_indir} '
+        '-B {input.bam} '
+        '-O {params.stacks_outdir} '
+        '&> {log}'
+
+
+# 09 map the catalog to the reference genome
+rule sam_to_bam:
+    input:
+        sam = 'output/09_bwa/gstacks.sam'
+    output:
+        bam = 'output/09_bwa/gstacks_filtered.bam'
     threads:
         75
     log:
-        'output/logs/07_gstacks.log'
+        'output/log/09_sam-to-bam.log'
+    shell:
+        'samtools view '
+        '-S '
+        # '-f 16 '
+        '-b -h '
+        '-@ {threads} '
+        '-o {output.bam} '
+        '{input.sam} '
+        '2> {log}'
+
+
+rule bwa_mem:
+    input:
+        ref = 'output/09_bwa/mh.fa',
+        bwt = 'output/09_bwa/mh.fa.bwt',
+        fa = 'output/04_stacks/gstacks.fa.gz'
+    output:
+        fa = temp('output/09_bwa/gstacks.fa'),
+        sam = 'output/09_bwa/gstacks.sam'
+    threads:
+        75
+    log:
+        'output/log/09_bwa-mem.log'
+    shell:
+        'zcat {input.fa} > {output.fa} ; '
+        'bwa mem '
+        '-t {threads} '
+        '-S -P '
+        '{input.ref} '
+        '{output.fa} '
+        '> {output.sam} '
+        '2> {log}'
+
+rule bwa_index:
+    input:
+        fa = 'data/mh/final.scaffolds.fa'
+    output:
+        fa = 'output/09_bwa/mh.fa',
+        bwt = 'output/09_bwa/mh.fa.bwt',
+        sa = 'output/09_bwa/mh.fa.sa'
+    threads:
+        1
+    log:
+        'output/logs/09_bwa-index.log'
+    shell:
+        'cp {input.fa} {output.fa} ; '
+        'bwa index {output.fa} &> {log}'    
+
+
+# 08 generate catalog
+rule gstacks:
+    input:
+        dynamic('output/04_stacks/{tsv2bam_indiv}.bam'),
+        filtered_popmap = 'output/01_config/filtered_popmap.tsv'
+    output:
+        'output/04_stacks/gstacks.fa.gz',
+        'output/04_stacks/gstacks.vcf.gz'
+    params:
+        stacks_dir = 'output/04_stacks'
+    threads:
+        75
+    log:
+        'output/logs/08_gstacks.log'
     shell:
         'gstacks '
         '-P {params.stacks_dir} '
@@ -88,19 +187,19 @@ rule gstacks:
         '-t {threads} '
         '&> {log}'
 
-# 06 match samples to the catalog and convert to bam
+# 07 match samples to the catalog and convert to bam
 rule tsv2bam:
     input:
-        dynamic('output/03_stacks/{sstacks_indiv}.matches.tsv.gz'),
+        dynamic('output/04_stacks/{sstacks_indiv}.matches.tsv.gz'),
         filtered_popmap = 'output/01_config/filtered_popmap.tsv'
     output:
-        dynamic('output/03_stacks/{tsv2bam_indiv}.bam')
+        dynamic('output/04_stacks/{tsv2bam_indiv}.bam')
     params:
-        stacks_dir = 'output/03_stacks'
+        stacks_dir = 'output/04_stacks'
     threads:
         75
     log:
-        'output/logs/06_sstacks/tsv2bam.log'
+        'output/logs/07_sstacks/tsv2bam.log'
     shell:
         'tsv2bam '
         '-P {params.stacks_dir} '
@@ -110,16 +209,16 @@ rule tsv2bam:
 
 rule sstacks:
     input:
-        catalog = 'output/03_stacks/batch_1.catalog.tags.tsv.gz',
+        catalog = 'output/04_stacks/batch_1.catalog.tags.tsv.gz',
         filtered_popmap = 'output/01_config/filtered_popmap.tsv'
     output:
-        dynamic('output/03_stacks/{sstacks_indiv}.matches.tsv.gz')
+        dynamic('output/04_stacks/{sstacks_indiv}.matches.tsv.gz')
     params:
-        stacks_dir = 'output/03_stacks'
+        stacks_dir = 'output/04_stacks'
     threads:
         75
     log:
-        'output/logs/06_sstacks/sstacks.log'
+        'output/logs/07_sstacks/sstacks.log'
     shell:
         'sstacks '
         '-P {params.stacks_dir} '
@@ -127,33 +226,33 @@ rule sstacks:
         '-p {threads} '
         '&> {log}'
 
-# 05 generate the catalog
+# 06 generate the catalog
 rule cstacks:
     input:
-        dynamic('output/03_stacks/{individual}.alleles.tsv.gz'),
+        dynamic('output/04_stacks/{individual}.alleles.tsv.gz'),
         map = 'output/01_config/filtered_popmap.tsv'
     output:
-        'output/03_stacks/batch_1.catalog.tags.tsv.gz',
-        'output/03_stacks/batch_1.catalog.snps.tsv.gz',
-        'output/03_stacks/batch_1.catalog.alleles.tsv.gz'
+        'output/04_stacks/batch_1.catalog.tags.tsv.gz',
+        'output/04_stacks/batch_1.catalog.snps.tsv.gz',
+        'output/04_stacks/batch_1.catalog.alleles.tsv.gz'
     params:
-        ustacks_dir = 'output/03_stacks'
+        stacks_dir = 'output/04_stacks'
     threads:
         75
     log:
-        'output/logs/05_cstacks.log'
+        'output/logs/06_cstacks.log'
     shell:
         'cstacks '
         '-p {threads} '
-        '-P {params.ustacks_dir} '
+        '-P {params.stacks_dir} '
         '-M {input.map} '
         '-n 3 '
         '&> {log} '
-  
-# 04 calculate coverage stats per individual and filter
+
+# 05 calculate coverage stats per individual and filter
 rule filter_by_coverage:
     input:
-        combined_covstats = ('output/04_covstats/'
+        combined_covstats = ('output/05_covstats/'
                              'individual_covstats_combined.csv')
     output:
         filtered_popmap = 'output/01_config/filtered_popmap.tsv'
@@ -165,43 +264,42 @@ rule filter_by_coverage:
             covstats_file=input.combined_covstats,
             filtered_popmap=output.filtered_popmap)
 
-
 rule combine_individual_covstats:
     input:
-        dynamic('output/04_covstats/{individual}.csv')
+        dynamic('output/05_covstats/{individual}.csv')
     output:
-        combined = 'output/04_covstats/individual_covstats_combined.csv'
+        combined = 'output/05_covstats/individual_covstats_combined.csv'
     script:
         'src/combine_csvs.R'
 
 rule individual_covstats:
     input:
-        tags_file = 'output/03_stacks/{individual}.tags.tsv.gz'
+        tags_file = 'output/04_stacks/{individual}.tags.tsv.gz'
     output:
-        covstats = 'output/04_covstats/{individual}.csv'
+        covstats = 'output/05_covstats/{individual}.csv'
     log:
-        log = 'output/logs/04_covstats/{individual}.log'
+        log = 'output/logs/05_covstats/{individual}.log'
     threads:
         1
     script:
         'src/calculate_mean_coverage.R'
 
-# 03 assemble loci
+# 04 assemble loci
 rule ustacks:
     input:
         fastq = 'output/02_demux/{individual}.fq.gz',
         individual_i_pickle = 'output/01_config/individual_i.p'
     params:
-        wd = 'output/03_stacks'
+        wd = 'output/04_stacks'
     output:
-        'output/03_stacks/{individual}.alleles.tsv.gz',
-        'output/03_stacks/{individual}.snps.tsv.gz',
-        'output/03_stacks/{individual}.models.tsv.gz',
-        'output/03_stacks/{individual}.tags.tsv.gz'
+        'output/04_stacks/{individual}.alleles.tsv.gz',
+        'output/04_stacks/{individual}.snps.tsv.gz',
+        'output/04_stacks/{individual}.models.tsv.gz',
+        'output/04_stacks/{individual}.tags.tsv.gz'
     threads:
         10
     log:
-        'output/logs/03_ustacks/{individual}.log'
+        'output/logs/04_ustacks/{individual}.log'
     run:
         # open the pickled dictionary and look up the sample_i
         with open(input.individual_i_pickle, 'rb') as f:
@@ -213,9 +311,113 @@ rule ustacks:
               '-f {input.fastq} '
               '-o {params.wd} '
               '-i {sample_i} '
-              '-m 3 '
-              '-M 3 '
-              '&> {log}')
+              '-m 5 '
+              '-M 2 '
+              '&> {log}')   
+
+
+# 03 parameter optimisation
+rule optim_compare:
+    input:
+        dynamic('output/02_demux/{individual}.fq.gz'),
+        full_popmap = 'output/01_config/full_popmap.txt',
+        mm_results = 'output/03_params/stats_Mm/samplestats_combined.csv',
+        n_results = 'output/03_params/stats_n/samplestats_combined.csv'
+    output:
+        'output/03_params/compare_defaults/optimised_samplestats_combined.csv'
+    params:
+        sample_dir = 'output/02_demux',
+        outdir = 'output/03_params'
+    threads:
+        50
+    log:
+        'output/logs/03_params/compare.log'
+    shell:
+        'stacks_parameters '
+        '--mode compare_defaults -M 2 -m 5 -n 2 '
+        '-o {params.outdir} '
+        '--threads {threads} '
+        '{input.full_popmap} '
+        '{params.sample_dir} '
+        '&> {log}'
+
+
+rule optim_n:
+    input:
+        dynamic('output/02_demux/{individual}.fq.gz'),
+        full_popmap = 'output/01_config/full_popmap.txt',
+        mm_results = 'output/03_params/stats_Mm/samplestats_combined.csv'
+    output:
+        'output/03_params/stats_n/samplestats_combined.csv'
+    params:
+        sample_dir = 'output/02_demux',
+        outdir = 'output/03_params'
+    threads:
+        50
+    log:
+        'output/logs/03_params/optim-n.log'
+    shell:
+        'stacks_parameters '
+        '--mode optim_n -M 2 -m 5 '
+        '-o {params.outdir} '
+        '--threads {threads} '
+        '{input.full_popmap} '
+        '{params.sample_dir} '
+        '&> {log}'
+
+rule optim_mm:
+    input:
+        dynamic('output/02_demux/{individual}.fq.gz'),
+        full_popmap = 'output/01_config/full_popmap.txt',
+        setup_popmap = 'output/03_params/filtering/replicate_1_popmap.txt'
+    output:
+        'output/03_params/stats_Mm/samplestats_combined.csv'
+    params:
+        sample_dir = 'output/02_demux',
+        outdir = 'output/03_params'
+    threads:
+        50
+    log:
+        'output/logs/03_params/optim-mm.log'
+    shell:
+        'stacks_parameters '
+        '--mode optim_Mm '
+        '-o {params.outdir} '
+        '--threads {threads} '
+        '{input.full_popmap} '
+        '{params.sample_dir} '
+        '&> {log}'
+
+rule optim_setup:
+    input:
+        dynamic('output/02_demux/{individual}.fq.gz'),
+        full_popmap = 'output/01_config/full_popmap.txt'
+    output:
+        'output/03_params/filtering/replicate_1_popmap.txt'
+    params:
+        sample_dir = 'output/02_demux',
+        outdir = 'output/03_params'
+    threads:
+        50
+    log:
+        'output/logs/03_params_setup.log'
+    shell:
+        'stacks_parameters '
+        '--mode setup '
+        '-o {params.outdir} '
+        '--threads {threads} '
+        '{input.full_popmap} '
+        '{params.sample_dir} '
+        '&> {log}'
+
+rule full_popmap:
+    input:
+        key_file = key_file
+    output:
+        full_popmap = 'output/01_config/full_popmap.txt'
+    run:
+        generate_full_popmap(input.key_file, output.full_popmap)
+
 
 # 02b. make a dictionary of sample:i for cstacks
 rule enumerate_filtered_samples:
