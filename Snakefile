@@ -78,7 +78,62 @@ read_file = 'data/C6JRFANXX/SQ2532_NoIndex_L007_R1_001.fastq.gz'
 rule target:
     input:
         'output/04_stacks/gstacks.vcf.gz',
-        'output/03_params/compare_defaults/optimised_samplestats_combined.csv'
+        'output/03_params/compare_defaults/optimised_samplestats_combined.csv',
+        expand(('output/11_stacks-populations/r{r}/'
+                'populations.sumstats_summary.tsv'),
+               r=[0.8])
+
+# 11 generate filtered SNP table for adegenet
+rule populations:
+    input:
+        'output/04_stacks/catalog.fa.gz',
+        'output/04_stacks/catalog.calls',
+        map = 'output/01_config/filtered_popmap.tsv'
+    output:
+        'output/11_stacks-populations/r{r}/populations.sumstats_summary.tsv',
+        'output/11_stacks-populations/r{r}/populations.markers.tsv',
+        'output/11_stacks-populations/r{r}/populations.hapstats.tsv',
+        'output/11_stacks-populations/r{r}/populations.sumstats.tsv',
+        'output/11_stacks-populations/r{r}/populations.haplotypes.tsv',
+        'output/11_stacks-populations/r{r}/populations.snps.genepop',
+        'output/11_stacks-populations/r{r}/populations.snps.vcf'
+    params:
+        stacks_dir = 'output/04_stacks',
+        outdir = 'output/11_stacks-populations/r{r}'
+    threads:
+        50
+    log:
+        'output/logs/11_stacks-populations/r{r}.log'
+    shell:
+        'populations '
+        '-P {params.stacks_dir} '
+        '-M {input.map} '
+        '-O {params.outdir} '
+        '-t {threads} '
+        '-r {wildcards.r} '
+        '--genepop --vcf '
+        '&> {log}'
+
+rule link_catalog_output2:
+    input:
+        'output/04_stacks/gstacks.vcf.gz'
+    output:
+        'output/04_stacks/catalog.calls'
+    shell:
+        'ln -s '
+        '"$(readlink -f {input})" '
+        '"$(readlink -f {output})"'
+
+rule link_catalog_output:
+    input:
+        'output/04_stacks/gstacks.fa.gz'
+    output:
+        'output/04_stacks/catalog.fa.gz'
+    shell:
+        'ln -s '
+        '"$(readlink -f {input})" '
+        '"$(readlink -f {output})"'
+
 
 # 10 integrate the alignment information
 rule integrate_alignments:
