@@ -79,11 +79,28 @@ rule target:
     input:
         'output/04_stacks/gstacks.vcf.gz',
         'output/03_params/compare_defaults/optimised_samplestats_combined.csv',
-        expand(('output/11_stacks-populations/r{r}/'
-                'populations.sumstats_summary.tsv'),
+        expand('output/11_stacks-populations/r{r}/snps.Rds',
                r=[0.8])
 
 # 11 generate filtered SNP table for adegenet
+rule adegenet_snps:
+    input:
+        genepop = 'output/11_stacks-populations/r{r}/populations.snps.gen'
+    output:
+        adegenet_snps = 'output/11_stacks-populations/r{r}/snps.Rds'
+    log:
+        log = 'output/logs/11_stacks-populations/r{r}_adegenet-snps.log'
+    script:
+        'src/generate_adegenet_snps.R'
+
+rule rename_genepop:
+    input:
+        'output/11_stacks-populations/r{r}/populations.snps.genepop'
+    output:
+        'output/11_stacks-populations/r{r}/populations.snps.gen'
+    shell:
+        'cp {input} {output}'
+
 rule populations:
     input:
         'output/04_stacks/catalog.fa.gz',
