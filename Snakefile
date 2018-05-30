@@ -79,8 +79,8 @@ rule target:
     input:
         'output/04_stacks/gstacks.vcf.gz',
         'output/03_params/compare_defaults/optimised_samplestats_combined.csv',
-        expand('output/11_stacks-populations/r{r}/snps.Rds',
-               r=[0.8])
+        expand('output/11_stacks-populations/r{r}/genlight.Rds',
+               r=[0, 0.8])
 
 # 11 generate filtered SNP table for adegenet
 rule adegenet_snps:
@@ -101,6 +101,98 @@ rule rename_genepop:
     shell:
         'cp {input} {output}'
 
+
+# use SNPRelate to filter missing / maf / ld-prune
+# output to PED with e.g.
+# snpgdsGDS2PED(gds,
+#               "test.ped",
+#               snp.id = snpset_ids,
+#               verbose = TRUE)
+# then use plink to convert to raw e.g.
+# plink --recodeA --ped test.ped.ped --map test.ped.map --allow-extra-chr
+# then read into adegenet e.g. read.PLINK("plink.raw")
+
+rule genlight:
+    input:
+        plink = 'output/11_stacks-populations/r{r}/plink.raw',
+        map = 'output/11_stacks-populations/r{r}/populations.snps.map'
+    output:
+        rds = 'output/11_stacks-populations/r{r}/genlight.Rds'
+    threads:
+        1
+    log:
+        'output/logs/11_stacks-populations/r{r}_genlight.log'
+    shell:
+        'Rscript -e \''
+        'library(adegenet) ; '
+        'gl <- read.PLINK("{input.plink}", map.file = "{input.map}") ; '
+        'saveRDS(gl, "{output.rds}") ; '
+        'sessionInfo()'
+        '\' '
+        '&> {log}'
+
+
+rule convert_plink_output:
+    input:
+        ped = 'output/11_stacks-populations/r{r}/populations.snps.ped',
+        map = 'output/11_stacks-populations/r{r}/populations.snps.map'
+    output:
+        'output/11_stacks-populations/r{r}/plink.raw'
+    params:
+        wd = 'output/11_stacks-populations/r{r}'
+    threads:
+        1
+    log:
+        'plink.log'
+    shell:
+        'cd {params.wd} || exit 1 ; '
+        'plink '
+        '--recode A '
+        '--ped populations.snps.ped '
+        '--map populations.snps.map '
+        '--allow-extra-chr '
+        '&> {log}'
+
+
+rule filter_snps:
+    input:
+        gds = 'output/11_stacks-populations/r{r}/populations.snps.gds'
+    output:
+        'output/11_stacks-populations/r{r}/populations.snps.ped',
+        'output/11_stacks-populations/r{r}/populations.snps.map'
+    params:
+        pedfn = 'output/11_stacks-populations/r{r}/populations.snps',
+        maf = 0.05,
+        missing_rate = 0.2,
+        sample_missing_quantile = 0.8
+    threads:
+        1
+    log:
+        log = 'output/logs/11_stacks-populations/r{r}_filter_snps.log'
+    script:
+        'src/filter_snps.R'
+
+
+rule vcf2gds:
+    input:
+        vcf = 'output/11_stacks-populations/r{r}/populations.snps.vcf'
+    output:
+        gds = 'output/11_stacks-populations/r{r}/populations.snps.gds'
+    threads:
+        1
+    log:
+        'output/logs/11_stacks-populations/r{r}_vcf2gds.log'
+    shell:
+        'Rscript -e \''
+        'library(SNPRelate) ; '
+        'snpgdsVCF2GDS('
+        '"{input.vcf}",'
+        '"{output.gds}",'
+        'method = "biallelic.only",'
+        'verbose = TRUE)'
+        '\''
+        '&> {log}'
+
 rule populations:
     input:
         'output/04_stacks/catalog.fa.gz',
@@ -118,7 +210,7 @@ rule populations:
         stacks_dir = 'output/04_stacks',
         outdir = 'output/11_stacks-populations/r{r}'
     threads:
-        50
+        25
     log:
         'output/logs/11_stacks-populations/r{r}.log'
     shell:
